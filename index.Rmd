@@ -9,20 +9,36 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Background
+## Introduction
 
-Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+The aim of this project is to predict if a particular excercise, weight lifting, is performed cotrrectly. We are provided with data of 6 people performing weight lifting excersises in 5 different ways of which 1 is correct and the other 4 are incorrect. The original data from which the train and test data with which we are provided can be found at the following website: http://groupware.les.inf.puc-rio.br/har. The website also contains additional information regading the data and the performed study. The data is collected from accelerometers on the belt, forearm, arm and the dumbell itself.
 
-```{r cars}
-summary(cars)
+## Data Exploration and Cleaning
+
+The first step is to download the data and set missing values to NA.
+
+```{r, message=FALSE, cache=TRUE}
+rawtrain <- "pml-training.csv"; rawtest <- "pml-testing.csv"
+
+if(!file.exists(rawtrain) | !file.exists(rawtest)) {
+        trainUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+        testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+        download.file(url = trainUrl, destfile = rawtrain, mode = "w")
+        download.file(url = testUrl, destfile = rawtest, mode = "w")
+}
+dtrain <- read.csv(rawtrain, header = TRUE, na.strings = c("NA", "#DIV/0!", ""))
+dtest <- read.csv(rawtest, header = TRUE, na.strings = c("NA", "#DIV/0!", ""))
 ```
+Before taking an in depth look at the data we first clean the data of the variables which are all NA and which are near zero values.
 
-## Including Plots
+```{r, message=FALSE, cache=TRUE}
+library(dplyr)
+dtrain <- tbl_df(dtrain); dtest <- tbl_df(dtest)
 
-You can also embed plots, for example:
+ColnotNA <- as.vector( which( colSums( is.na(dtrain) ) <= 0.95 * nrow(dtrain) ) )
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+dtrain <- dtrain %>% select(ColnotNA)
+dtest <- dtest %>% select(ColnotNA)
+
+
 ```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
