@@ -11,7 +11,7 @@
 
 <meta name="author" content="Bert Haak" />
 
-<meta name="date" content="2017-03-13" />
+<meta name="date" content="2017-03-18" />
 
 <title>Practical Machine Learning Course Project</title>
 
@@ -119,14 +119,15 @@ $(document).ready(function () {
 
 <h1 class="title toc-ignore">Practical Machine Learning Course Project</h1>
 <h4 class="author"><em>Bert Haak</em></h4>
-<h4 class="date"><em>March 13, 2017</em></h4>
+<h4 class="date"><em>March 18, 2017</em></h4>
 
 </div>
 
 
 <div id="introduction" class="section level2">
 <h2>Introduction</h2>
-<p>The aim of this project is to predict if a particular excercise, weight lifting, is performed cotrrectly. We are provided with data of 6 people performing weight lifting excersises in 5 different ways of which 1 is correct and the other 4 are incorrect. The original data from which the train and test data with which we are provided can be found at the following website: <a href="http://groupware.les.inf.puc-rio.br/har" class="uri">http://groupware.les.inf.puc-rio.br/har</a>. The website also contains additional information regading the data and the performed study. The data is collected from accelerometers on the belt, forearm, arm and the dumbell itself.</p>
+<p>The aim of this project is to predict if a particular excercise, weight lifting, is performed correct. We are provided with data of 6 people performing weight lifting excersises in 5 different ways of which 1 is correct and the other 4 are incorrect. The original data may be found at the following website: <a href="http://groupware.les.inf.puc-rio.br/har" class="uri">http://groupware.les.inf.puc-rio.br/har</a>. The website also contains additional information regarding the data and the performed study. The data is collected from accelerometers on the belt, forearm, arm and the dumbell itself.</p>
+<p>This report describes how the model is built, how cross validation is used and what the out of sample error is. The final model will be used to predict 20 different test cases.</p>
 </div>
 <div id="data-exploration-and-cleaning" class="section level2">
 <h2>Data Exploration and Cleaning</h2>
@@ -141,14 +142,123 @@ if(!file.exists(rawtrain) | !file.exists(rawtest)) {
 }
 dtrain &lt;- read.csv(rawtrain, header = TRUE, na.strings = c(&quot;NA&quot;, &quot;#DIV/0!&quot;, &quot;&quot;))
 dtest &lt;- read.csv(rawtest, header = TRUE, na.strings = c(&quot;NA&quot;, &quot;#DIV/0!&quot;, &quot;&quot;))</code></pre>
-<p>Before taking an in depth look at the data we first clean the data of the variables which are all NA and which are near zero values.</p>
+<p>Before taking an in depth look at the data we first clean the data of the variables which are predominantly NA.</p>
 <pre class="r"><code>library(dplyr)
 dtrain &lt;- tbl_df(dtrain); dtest &lt;- tbl_df(dtest)
 
 ColnotNA &lt;- as.vector( which( colSums( is.na(dtrain) ) &lt;= 0.95 * nrow(dtrain) ) )
 
 dtrain &lt;- dtrain %&gt;% select(ColnotNA)
-dtest &lt;- dtest %&gt;% select(ColnotNA)</code></pre>
+dtest &lt;- dtest %&gt;% select(ColnotNA)
+dim(dtrain); dim(dtest)</code></pre>
+<pre><code>## [1] 19622    60</code></pre>
+<pre><code>## [1] 20 60</code></pre>
+<p>A lot of columns have more than 95% NA values, which seems a lot. At this point it seems like a good idea to take a look at the original data set.</p>
+<pre class="r"><code>orgdata &lt;- &quot;WLE_biceps_curl_variations.csv&quot;
+
+if(!file.exists(orgdata)) {
+        orgUrl &lt;- &quot;http://groupware.les.inf.puc-rio.br/static/WLE/WearableComputing_weight_lifting_exercises_biceps_curl_variations.csv&quot;
+        download.file(url = orgUrl, destfile = orgdata, mode = &quot;w&quot;)
+}
+doriginal &lt;- read.csv(orgdata, header = TRUE, na.strings = c(&quot;NA&quot;, &quot;#DIV/0!&quot;, &quot;&quot;))</code></pre>
+<p>The original data set has the same issue, but the variables with NA values all have values when the new_window variable changes from no to yes. However the original data set has a lot more observations than the provided train and test sets, which leads to the assumption that the provided sets are subsets of the original data set. To test this assumption we take the first observation in the training set and look up the classe, the variable we need to predict, by user_name, raw_timestamp_part_2 and num_window.</p>
+<pre class="r"><code>chk1 &lt;- dtrain %&gt;% select(user_name, raw_timestamp_part_2, num_window, classe) %&gt;%
+        filter(row_number() ==1)
+chk2 &lt;- doriginal %&gt;% select(user_name, raw_timestamp_part_2, num_window, classe) %&gt;%
+        filter(user_name == chk1$user_name[1], raw_timestamp_part_2 == chk1$raw_timestamp_part_2[1],
+                num_window == chk1$num_window[1] )
+rbind(chk1, chk2)</code></pre>
+<pre><code>## # A tibble: 2 × 4
+##   user_name raw_timestamp_part_2 num_window classe
+## *    &lt;fctr&gt;                &lt;int&gt;      &lt;int&gt; &lt;fctr&gt;
+## 1  carlitos               788290         11      A
+## 2  carlitos               788290         11      A</code></pre>
+<p>The table clearly shows that by using the first three variables we can predict the fourth, i.e. classe. As the test set contains the same variables we can predict the classe with 100% accuracy. We can use this discovery to check the outcomes from our final model.</p>
+<p>We will continue with the data cleaning by removing the near zero covariates from the train and test sets and those variables not linked to the weight lifting excercise to prevent overfitting.</p>
+<pre class="r"><code>library(caret)
+nzv &lt;- nearZeroVar(dtrain, saveMetrics = TRUE); nzv[nzv$nzv == TRUE,]</code></pre>
+<pre><code>##            freqRatio percentUnique zeroVar  nzv
+## new_window  47.33005    0.01019264   FALSE TRUE</code></pre>
+<pre class="r"><code>dtrain &lt;- dtrain %&gt;% select(-(1:7))
+dtest &lt;- dtest %&gt;% select(-(1:7))</code></pre>
+<p>So only the new_window value is a near zero covariate, we remove it as well as the other variables not linked to the weight lifting excercise.</p>
+</div>
+<div id="split-the-train-data" class="section level2">
+<h2>Split the train data</h2>
+<p>As we need to be able to estimate the out of sample error and to check the accuracy of our model before using it on the test set the train data is split into two parts.</p>
+<pre class="r"><code>set.seed(131169)
+inTrain &lt;- createDataPartition(dtrain$classe, p = 0.75, list = FALSE)
+training &lt;- dtrain[inTrain, ]; testing &lt;- dtrain[-inTrain, ]</code></pre>
+</div>
+<div id="model-build" class="section level2">
+<h2>Model Build</h2>
+<p>The lectures mentioned that Random Forest models are amongst the best performing models. So this is also the go to model for this project. As Random Forest models can take a long time to run we need to set up caret for parallel processing. We also save the model for future use.</p>
+<pre class="r"><code>library(parallel); library(doParallel)
+model &lt;- &quot;modRF.RData&quot;
+
+if(!file.exists(model)){
+        cluster &lt;- makeCluster(detectCores() - 1)
+        registerDoParallel(cluster)
+        
+        fitControl &lt;- trainControl(method = &quot;cv&quot;, number = 10, allowParallel = TRUE)
+        modRF &lt;- train(classe ~ ., method =&quot;rf&quot;, data = training, trControl = fitControl)
+        save(modRF, file = &quot;modRF.RData&quot;)
+        
+        stopCluster(cluster)
+        registerDoSEQ()
+}else {
+        load(file = model)
+}</code></pre>
+</div>
+<div id="accuracy-and-out-of-sample-error" class="section level2">
+<h2>Accuracy and Out of Sample Error</h2>
+<p>Based on the Random Forest model and the testing data we determine the accuracy and the out of sample error.</p>
+<pre class="r"><code>predRF &lt;- predict(modRF, newdata = testing)
+confusionMatrix(predRF, testing$classe)</code></pre>
+<pre><code>## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction    A    B    C    D    E
+##          A 1393    6    0    0    0
+##          B    1  938    4    0    0
+##          C    0    5  849   23    0
+##          D    0    0    2  781    2
+##          E    1    0    0    0  899
+## 
+## Overall Statistics
+##                                          
+##                Accuracy : 0.991          
+##                  95% CI : (0.988, 0.9935)
+##     No Information Rate : 0.2845         
+##     P-Value [Acc &gt; NIR] : &lt; 2.2e-16      
+##                                          
+##                   Kappa : 0.9886         
+##  Mcnemar's Test P-Value : NA             
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity            0.9986   0.9884   0.9930   0.9714   0.9978
+## Specificity            0.9983   0.9987   0.9931   0.9990   0.9998
+## Pos Pred Value         0.9957   0.9947   0.9681   0.9949   0.9989
+## Neg Pred Value         0.9994   0.9972   0.9985   0.9944   0.9995
+## Prevalence             0.2845   0.1935   0.1743   0.1639   0.1837
+## Detection Rate         0.2841   0.1913   0.1731   0.1593   0.1833
+## Detection Prevalence   0.2853   0.1923   0.1788   0.1601   0.1835
+## Balanced Accuracy      0.9984   0.9936   0.9930   0.9852   0.9988</code></pre>
+<p>The cross validated accuracy is over 99.1% and the out of sample error is 0.9%, which is quite low. So there is no need to try a different model approach.</p>
+</div>
+<div id="test-predictions" class="section level2">
+<h2>Test Predictions</h2>
+<p>The last step is to create the test predictions for submission.</p>
+<pre class="r"><code>predFinal &lt;- predict(modRF, newdata = dtest)
+predFinal</code></pre>
+<pre><code>##  [1] B A B A A E D B A A B C B A E E A B B B
+## Levels: A B C D E</code></pre>
+</div>
+<div id="conclusion" class="section level2">
+<h2>Conclusion</h2>
+<p>The Random Forest model is a suitable model for the provided data set as it correctly predicted all 20 test cases. The accuracy can probably be increased by using stacking and tweaking the parameters of the <code>trainControl</code> function, however for this assignement this was not necessary.</p>
 </div>
 
 

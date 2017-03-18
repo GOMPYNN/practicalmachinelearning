@@ -1,7 +1,7 @@
 ---
 title: "Practical Machine Learning Course Project"
 author: "Bert Haak"
-date: "March 13, 2017"
+date: "March 18, 2017"
 output: html_document
 ---
 
@@ -11,7 +11,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Introduction
 
-The aim of this project is to predict if a particular excercise, weight lifting, is performed cotrrectly. We are provided with data of 6 people performing weight lifting excersises in 5 different ways of which 1 is correct and the other 4 are incorrect. The original data from which the train and test data with which we are provided can be found at the following website: http://groupware.les.inf.puc-rio.br/har. The website also contains additional information regading the data and the performed study. The data is collected from accelerometers on the belt, forearm, arm and the dumbell itself.
+The aim of this project is to predict if a particular excercise, weight lifting, is performed correct. We are provided with data of 6 people performing weight lifting excersises in 5 different ways of which 1 is correct and the other 4 are incorrect. The original data may be found at the following website: http://groupware.les.inf.puc-rio.br/har. The website also contains additional information regarding the data and the performed study. The data is collected from accelerometers on the belt, forearm, arm and the dumbell itself.
+
+This report describes how the model is built, how cross validation is used and what the out of sample error is. The final model will be used to predict 20 different test cases.
 
 ## Data Exploration and Cleaning
 
@@ -29,7 +31,7 @@ if(!file.exists(rawtrain) | !file.exists(rawtest)) {
 dtrain <- read.csv(rawtrain, header = TRUE, na.strings = c("NA", "#DIV/0!", ""))
 dtest <- read.csv(rawtest, header = TRUE, na.strings = c("NA", "#DIV/0!", ""))
 ```
-Before taking an in depth look at the data we first clean the data of the variables which are all NA and which are near zero values.
+Before taking an in depth look at the data we first clean the data of the variables which are predominantly NA.
 
 ```{r, message=FALSE, cache=TRUE}
 library(dplyr)
@@ -39,6 +41,91 @@ ColnotNA <- as.vector( which( colSums( is.na(dtrain) ) <= 0.95 * nrow(dtrain) ) 
 
 dtrain <- dtrain %>% select(ColnotNA)
 dtest <- dtest %>% select(ColnotNA)
-
-
+dim(dtrain); dim(dtest)
 ```
+A lot of columns have more than 95% NA values, which seems a lot. At this point it seems like a good idea to take a look at the original data set.
+
+```{r, message=FALSE, cache=TRUE}
+orgdata <- "WLE_biceps_curl_variations.csv"
+
+if(!file.exists(orgdata)) {
+        orgUrl <- "http://groupware.les.inf.puc-rio.br/static/WLE/WearableComputing_weight_lifting_exercises_biceps_curl_variations.csv"
+        download.file(url = orgUrl, destfile = orgdata, mode = "w")
+}
+doriginal <- read.csv(orgdata, header = TRUE, na.strings = c("NA", "#DIV/0!", ""))
+```
+The original data set has the same issue, but the variables with NA values all have values when the new_window variable changes from no to yes. However the original data set has a lot more observations than the provided train and test sets, which leads to the assumption that the provided sets are subsets of the original data set. To test this assumption we take the first observation in the training set and look up the classe, the variable we need to predict, by user_name, raw_timestamp_part_2 and num_window.
+
+```{r, message=FALSE, cache=TRUE}
+chk1 <- dtrain %>% select(user_name, raw_timestamp_part_2, num_window, classe) %>%
+        filter(row_number() ==1)
+chk2 <- doriginal %>% select(user_name, raw_timestamp_part_2, num_window, classe) %>%
+        filter(user_name == chk1$user_name[1], raw_timestamp_part_2 == chk1$raw_timestamp_part_2[1],
+                num_window == chk1$num_window[1] )
+rbind(chk1, chk2)
+```
+The table clearly shows that by using the first three variables we can predict the fourth, i.e. classe. As the test set contains the same variables we can predict the classe with 100% accuracy. We can use this discovery to check the outcomes from our final model.
+
+We will continue with the data cleaning by removing the near zero covariates from the train and test sets and those variables not linked to the weight lifting excercise to prevent overfitting.
+```{r, message=FALSE, cache=TRUE}
+library(caret)
+nzv <- nearZeroVar(dtrain, saveMetrics = TRUE); nzv[nzv$nzv == TRUE,]
+dtrain <- dtrain %>% select(-(1:7))
+dtest <- dtest %>% select(-(1:7))
+```
+So only the new_window value is a near zero covariate, we remove it as well as the other variables not linked to the weight lifting excercise.
+
+## Split the train data
+
+As we need to be able to estimate the out of sample error and to check the accuracy of our model before using it on the test set the train data is split into two parts.
+
+```{r, message=FALSE, cache=TRUE}
+set.seed(131169)
+inTrain <- createDataPartition(dtrain$classe, p = 0.75, list = FALSE)
+training <- dtrain[inTrain, ]; testing <- dtrain[-inTrain, ]
+```
+
+## Model Build
+
+The lectures mentioned that Random Forest models are amongst the best performing models. So this is also the go to model for this project. As Random Forest models can take a long time to run we need to set up caret for parallel processing. We also save the model for future use.
+
+```{r, message=FALSE, cache=TRUE}
+library(parallel); library(doParallel)
+model <- "modRF.RData"
+
+if(!file.exists(model)){
+        cluster <- makeCluster(detectCores() - 1)
+        registerDoParallel(cluster)
+        
+        fitControl <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
+        modRF <- train(classe ~ ., method ="rf", data = training, trControl = fitControl)
+        save(modRF, file = "modRF.RData")
+        
+        stopCluster(cluster)
+        registerDoSEQ()
+}else {
+        load(file = model)
+}
+```
+
+## Accuracy and Out of Sample Error
+
+Based on the Random Forest model and the testing data we determine the accuracy and the out of sample error.
+
+```{r, message=FALSE, cache=TRUE}
+predRF <- predict(modRF, newdata = testing)
+confusionMatrix(predRF, testing$classe)
+```
+The cross validated accuracy is over 99.1% and the out of sample error is 0.9%, which is quite low. So there is no need to try a different model approach.
+
+## Test Predictions
+
+The last step is to create the test predictions for submission.
+
+```{r, message=FALSE, cache=TRUE}
+predFinal <- predict(modRF, newdata = dtest)
+predFinal
+```
+## Conclusion
+
+The Random Forest model is a suitable model for the provided data set as it correctly predicted all 20 test cases. The accuracy can probably be increased by using stacking and tweaking the parameters of the `trainControl` function, however for this assignement this was not necessary.
